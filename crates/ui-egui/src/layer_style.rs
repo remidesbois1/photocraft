@@ -494,15 +494,44 @@ pub fn confirm(app: &mut PhotocraftApp, f: &Map<String, Value>) -> Result<Value,
     apply(f, |id, p| app.run(id, p))
 }
 
+/// Every parameter group is edited as an object. Validate before preview or confirmation so
+/// malformed values supplied through `ui.dialog.set` are reported before any command runs.
+fn validate_params(f: &Map<String, Value>) -> Result<(), String> {
+    let key = format!("p:{BLENDING}");
+    if let Some(value) = f.get(&key)
+        && !value.is_object()
+    {
+        return Err(format!("invalid layer style parameters: `{key}` must be an object"));
+    }
+    let Some(effects) = f.get("effects") else { return Ok(()) };
+    let Some(effects) = effects.as_array() else {
+        return Err("invalid layer style parameters: `effects` must be an array".into());
+    };
+    for (i, e) in effects.iter().enumerate() {
+        let Some(e) = e.as_object() else {
+            return Err(format!("invalid layer style parameters: `effects[{i}]` must be an object"));
+        };
+        if let Some(params) = e.get("params")
+            && !params.is_object()
+        {
+            return Err(format!("invalid layer style parameters: `effects[{i}].params` must be an object"));
+        }
+    }
+    Ok(())
+}
+
 /// Runs the dialog's commands through `run`: blending options, then the whole
 /// effect list in one `layer.layerStyle.replace` (instances keep their order;
 /// their snapshots carry what the dialog doesn't model).
 fn apply(f: &Map<String, Value>, mut run: impl FnMut(&str, Value) -> Result<Value, String>) -> Result<Value, String> {
+    validate_params(f)?;
     let layer = f.get("layer").cloned().unwrap_or(Value::Null);
     let initial_light_angle = f.get("globalLight").and_then(Value::as_f64);
-    if let Some(Value::Object(bo)) = f.get(&format!("p:{BLENDING}")) {
+    if let Some(bo) = f.get(&format!("p:{BLENDING}")).and_then(Value::as_object) {
         let mut p = Value::Object(bo.clone());
-        p["layer"] = layer.clone();
+        if let Some(params) = p.as_object_mut() {
+            params.insert("layer".into(), layer.clone());
+        }
         run("layer.layerStyle.blendingOptions", p)?;
     }
     let mut entries = Vec::new();
@@ -563,12 +592,12 @@ pub fn preview_document(
     doc: &photocraft_doc::Document,
     patterns: &photocraft_engine::pattern_cmds::PatternLibrary,
     f: &Map<String, Value>,
-) -> Option<photocraft_doc::Document> {
+) -> Result<photocraft_doc::Document, String> {
     let mut s = photocraft_engine::Session::new();
     s.patterns = patterns.clone();
     s.add_document(doc.clone(), None);
-    apply(f, |id, p| s.execute(id, p).map_err(|e| e.to_string())).ok()?;
-    s.active().map(|d| (*d.doc).clone())
+    apply(f, |id, p| s.execute(id, p).map_err(|e| e.to_string()))?;
+    s.active().map(|d| (*d.doc).clone()).ok_or_else(|| "no preview document".into())
 }
 
 /// Applies a style preset to the dialog fields in-place without touching the document.
@@ -631,6 +660,7 @@ pub fn body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Valu
     let selected = f.get("selected").and_then(Value::as_str).unwrap_or("dropShadow").to_string();
     let mut style_click: Option<String> = None;
     let mut new_style = false;
+    let invalid = validate_params(f).err();
     ui.horizontal_top(|ui| {
         // Left: effect list.
         ui.vertical(|ui| {
@@ -794,13 +824,19 @@ pub fn body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Valu
                 });
             });
             ui.add_space(6.0);
+            // Only reachable through `ui.dialog.set`: say what is wrong once, keep the bad value.
+            if let Some(error) = &invalid {
+                ui.colored_label(t.danger, error);
+                return;
+            }
             // The page shows the factory defaults under the instance's values,
             // but only real edits reach the stored params.
-            let mut disp = if selected == BLENDING {
+            let disp = if selected == BLENDING {
                 f.get("p:blendingOptions").cloned().unwrap_or_else(|| json!({}))
             } else {
                 entry(f, &selected).and_then(|e| e.get("params").cloned()).unwrap_or_else(|| json!({}))
             };
+            let Some(mut disp) = disp.as_object().map(|o| Value::Object(o.clone())) else { return };
             if selected != BLENDING {
                 let base = defaults(&sel_kind);
                 if let (Some(o), Some(b)) = (disp.as_object_mut(), base.as_object()) {
@@ -1103,6 +1139,77 @@ mod tests {
         let shown = preview_document(&st.doc, &s.patterns, &f).unwrap();
         let fx = |doc: &photocraft_doc::Document| doc.layer(id).unwrap().effects.items.len();
         assert_eq!((fx(&shown), fx(&st.doc)), (2, 0));
+    }
+
+    #[test]
+    fn preview_rejects_non_object_effect_params() {
+        let mut s = photocraft_engine::Session::new();
+        s.execute("file.new", json!({"width": 16, "height": 16})).unwrap();
+        s.execute("layer.new.layer", json!({})).unwrap();
+        let st = s.active().unwrap();
+        let mut f = initial_fields(st.doc.layer(st.active_layer.unwrap()).unwrap(), Some("colorOverlay"), st.doc.global_light.angle);
+        let id = f["selected"].as_str().unwrap().to_string();
+        entry_mut(&mut f, &id).unwrap()["params"] = json!("invalid");
+
+        assert!(preview_document(&st.doc, &s.patterns, &f).is_err());
+    }
+
+    #[test]
+    fn apply_rejects_non_object_params_before_running_commands() {
+        let mut f = Map::new();
+        f.insert("effects".into(), json!([{"id": "fx1", "kind": "stroke", "on": true, "params": [1, 2]}]));
+        let mut calls = 0;
+
+        let result = apply(&f, |_, _| {
+            calls += 1;
+            Ok(Value::Null)
+        });
+
+        assert!(result.is_err());
+        assert_eq!(calls, 0, "invalid params must not partially apply the style");
+    }
+
+    #[test]
+    fn body_keeps_invalid_params_and_renders_without_panicking() {
+        let ctx = egui::Context::default();
+        PhotocraftApp::setup_context(&ctx, crate::theme::ThemeKind::ALL[0]);
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+        for bad in [json!(7), json!(null), json!("x")] {
+            let mut fields = Map::new();
+            fields.insert("selected".into(), json!("fx1"));
+            fields.insert("effects".into(), json!([{"id": "fx1", "kind": "dropShadow", "on": true, "params": bad.clone()}]));
+
+            let mut out = ctx.run_ui(Default::default(), |ui| body(&mut app, ui, &mut fields));
+            out.textures_delta.clear();
+
+            assert_eq!(entry(&fields, "fx1").unwrap()["params"], bad);
+        }
+        for bad in [json!(7), json!([1])] {
+            let mut fields = Map::new();
+            fields.insert("selected".into(), json!(BLENDING));
+            fields.insert("p:blendingOptions".into(), bad.clone());
+            fields.insert("effects".into(), bad.clone());
+            let mut out = ctx.run_ui(Default::default(), |ui| body(&mut app, ui, &mut fields));
+            out.textures_delta.clear();
+            assert_eq!(fields.get("p:blendingOptions"), Some(&bad));
+        }
+    }
+
+    #[test]
+    fn confirm_rejects_invalid_params_and_applies_valid_effects() {
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+        app.run("file.new", json!({"width": 16, "height": 16})).unwrap();
+        app.run("layer.new.layer", json!({})).unwrap();
+        let layer = app.session.active().unwrap().doc.layer(app.session.active().unwrap().active_layer.unwrap()).unwrap().clone();
+        let mut invalid = initial_fields(&layer, Some("colorOverlay"), 0.0);
+        let id = invalid["selected"].as_str().unwrap().to_string();
+        entry_mut(&mut invalid, &id).unwrap()["params"] = json!(null);
+        assert!(confirm(&mut app, &invalid).is_err());
+        assert!(app.session.active().unwrap().doc.layer(layer.id).unwrap().effects.items.is_empty());
+
+        let valid = initial_fields(&layer, Some("colorOverlay"), 0.0);
+        confirm(&mut app, &valid).unwrap();
+        assert_eq!(app.session.active().unwrap().doc.layer(layer.id).unwrap().effects.items.len(), 1);
     }
 
     #[test]
