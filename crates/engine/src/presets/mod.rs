@@ -27,6 +27,8 @@ pub mod tools;
 #[cfg(test)]
 mod tests;
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -322,4 +324,3 @@ pub(crate) fn call(s: &mut Session, id: &str, p: Value) -> Result<Value> {
     (spec.enabled)(s).map_err(|why| EngineError::Disabled(id.to_string(), why))?;
     (spec.run)(s, &p)
 }
-use std::collections::BTreeMap;
