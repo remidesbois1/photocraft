@@ -943,4 +943,36 @@ mod tests {
         assert_eq!(r["user"], json!(true));
         assert_eq!(r["params"]["size"], json!(9));
     }
+
+    #[test]
+    fn double_stroke_bands_render_and_survive_an_edit() {
+        // The manga/typesetting case (#157): a 7 px white stroke under a 3 px black one.
+        let mut s = Session::new();
+        s.execute("file.new", json!({"width": 48, "height": 48})).unwrap();
+        s.execute("layer.new.layer", json!({})).unwrap();
+        s.execute("select.rect", json!({"x": 16, "y": 16, "width": 16, "height": 16})).unwrap();
+        s.execute("edit.fill", json!({"color": "#000000"})).unwrap();
+        s.execute("select.deselect", json!({})).unwrap();
+        s.execute("layer.layerStyle.stroke", json!({"size": 3, "color": "#000000", "position": "outside"})).unwrap();
+        s.execute("layer.layerStyle.stroke", json!({"size": 7, "color": "#ffffff", "position": "outside", "add": true})).unwrap();
+        let px = |s: &mut Session, x: i32, y: i32| -> [f32; 4] {
+            let mut v: Vec<f32> = serde_json::from_value(s.execute("document.pixel", json!({"x": x, "y": y})).unwrap()).unwrap();
+            v.resize(4, 1.0);
+            [v[0], v[1], v[2], v[3]]
+        };
+        // Bands from the square edge outward: 0..3 px black (the first stroke renders on top),
+        // 3..7 px white, then the white background.
+        assert!(px(&mut s, 24, 24)[0] < 0.1, "the square is black");
+        assert!(px(&mut s, 24, 14)[0] < 0.1, "the first stroke covers the wider one");
+        assert!(px(&mut s, 24, 11)[0] > 0.9, "the second stroke shows outside it");
+        assert!(px(&mut s, 24, 5)[0] > 0.9, "background beyond both");
+        // A dialog round trip (replace with the same snapshots) keeps both bands.
+        let before = px(&mut s, 24, 14);
+        let st = s.active().unwrap();
+        let id = st.active_layer.unwrap();
+        let items = st.doc.layer(id).unwrap().effects.items.clone();
+        let entries: Vec<Value> = items.iter().map(|fx| json!({"kind": "stroke", "fx": serde_json::to_value(fx).unwrap(), "params": {}})).collect();
+        s.execute("layer.layerStyle.replace", json!({"layer": id.0, "effects": entries})).unwrap();
+        assert_eq!(px(&mut s, 24, 14), before, "both strokes render identically after the round trip");
+    }
 }

@@ -892,12 +892,11 @@ pub fn body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Valu
             ui.add_space(4.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                 ui.add_enabled_ui(page_kind, |ui| {
-                    if crate::widgets::secondary_button(ui, tl!("Reset to Default"), 130.0).clicked() {
-                        if let Ok(v) = app.run("layer.layerStyle.defaultFor", json!({"kind": sel_kind})) {
-                            if let Some(e) = entry_mut(f, &selected) {
-                                e["params"] = v["params"].clone();
-                            }
-                        }
+                    if crate::widgets::secondary_button(ui, tl!("Reset to Default"), 130.0).clicked()
+                        && let Ok(v) = app.run("layer.layerStyle.defaultFor", json!({"kind": sel_kind}))
+                        && let Some(e) = entry_mut(f, &selected)
+                    {
+                        e["params"] = v["params"].clone();
                     }
                     if crate::widgets::secondary_button(ui, tl!("Make Default"), 110.0).clicked() {
                         let _ = app.run("layer.layerStyle.makeDefault", json!({"kind": sel_kind, "params": disp}));
