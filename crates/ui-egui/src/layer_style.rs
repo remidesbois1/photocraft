@@ -77,6 +77,15 @@ fn spec(kind: &str) -> &'static [(&'static str, &'static str, P)] {
     const BSTYLE: &[(&str, &str)] = &[("inner", "Inner Bevel"), ("outer", "Outer Bevel"), ("emboss", "Emboss"), ("pillow", "Pillow Emboss")];
     const DIR: &[(&str, &str)] = &[("up", "Up"), ("down", "Down")];
     const SRC: &[(&str, &str)] = &[("edge", "Edge"), ("center", "Center")];
+    // The built-in contour presets (photocraft_engine::layer_style::CONTOURS).
+    const CONTOUR: &[(&str, &str)] = &[
+        ("Linear", "Linear"),
+        ("Cone", "Cone"),
+        ("Cone (Inverted)", "Cone (Inverted)"),
+        ("Domed", "Domed"),
+        ("Domed (Inverted)", "Domed (Inverted)"),
+        ("Diagonal (Descending)", "Diagonal (Descending)"),
+    ];
     match kind {
         "dropShadow" => &[
             ("blend", "Blend Mode", P::Blend),
@@ -87,6 +96,8 @@ fn spec(kind: &str) -> &'static [(&'static str, &'static str, P)] {
             ("distance", "Distance", P::Slider(0.0, 300.0, "px")),
             ("spread", "Spread", P::Slider(0.0, 100.0, "%")),
             ("size", "Size", P::Slider(0.0, 250.0, "px")),
+            ("contour", "Contour", P::Choice(CONTOUR)),
+            ("noise", "Noise", P::Slider(0.0, 100.0, "%")),
             ("knocksOut", "Layer Knocks Out Drop Shadow", P::Check),
         ],
         "innerShadow" => &[
@@ -98,6 +109,8 @@ fn spec(kind: &str) -> &'static [(&'static str, &'static str, P)] {
             ("distance", "Distance", P::Slider(0.0, 300.0, "px")),
             ("choke", "Choke", P::Slider(0.0, 100.0, "%")),
             ("size", "Size", P::Slider(0.0, 250.0, "px")),
+            ("contour", "Contour", P::Choice(CONTOUR)),
+            ("noise", "Noise", P::Slider(0.0, 100.0, "%")),
         ],
         "outerGlow" => &[
             ("blend", "Blend Mode", P::Blend),
@@ -106,6 +119,8 @@ fn spec(kind: &str) -> &'static [(&'static str, &'static str, P)] {
             ("spread", "Spread", P::Slider(0.0, 100.0, "%")),
             ("size", "Size", P::Slider(0.0, 250.0, "px")),
             ("range", "Range", P::Slider(1.0, 100.0, "%")),
+            ("contour", "Contour", P::Choice(CONTOUR)),
+            ("noise", "Noise", P::Slider(0.0, 100.0, "%")),
         ],
         "innerGlow" => &[
             ("blend", "Blend Mode", P::Blend),
@@ -114,6 +129,8 @@ fn spec(kind: &str) -> &'static [(&'static str, &'static str, P)] {
             ("source", "Source", P::Choice(SRC)),
             ("choke", "Choke", P::Slider(0.0, 100.0, "%")),
             ("size", "Size", P::Slider(0.0, 250.0, "px")),
+            ("contour", "Contour", P::Choice(CONTOUR)),
+            ("noise", "Noise", P::Slider(0.0, 100.0, "%")),
         ],
         "stroke" => &[
             ("size", "Size", P::Slider(1.0, 250.0, "px")),
