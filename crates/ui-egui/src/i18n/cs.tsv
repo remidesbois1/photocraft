@@ -913,8 +913,6 @@
 	Create new pattern from the selection	Vytvořit nový vzorek z výběru
 	Create new shape from the current path	Vytvořit nový tvar z aktuální cesty
 	Create new snapshot	Vytvořit nový snímek
-	Create new style (from the selected type)	Vytvořit nový styl (z vybraného textu)
-	Create new style from the selected layer	Vytvořit nový styl z vybrané vrstvy
 	Create new tool preset	Vytvořit nové přednastavení nástroje
 	Crop Factor	Crop faktor
 	Ctrl	Ctrl
@@ -2067,3 +2065,10 @@ cameraRaw	Color	Barvy
 	Patch:	Záplata:
 	Lasso around an area, then drag the selection	Obtáhněte oblast lasem a pak přetáhněte výběr
 	Edit Type	Upravit text
+
+
+	New Style…	Nový styl…
+	Style {name} saved	Styl {name} uložen
+
+	Create new style (from the selected type)	Vytvořit nový styl (z vybraného textu)
+	Create new style from the selected layer	Vytvořit nový styl z vybrané vrstvy
