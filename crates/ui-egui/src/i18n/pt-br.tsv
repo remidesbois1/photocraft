@@ -2520,3 +2520,8 @@ cameraRaw	Whites	Brancos
 	Don't show again	Não mostrar novamente
 	Save failed: {error}	Falha ao salvar: {error}
 	Save cancelled	Salvamento cancelado
+
+# Layer Style dialog: style presets and per-effect defaults
+	Style {name} saved	Estilo {name} salvo
+	Make Default	Definir como padrão
+	Reset to Default	Restaurar padrão
