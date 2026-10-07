@@ -31,6 +31,8 @@ enum P {
 }
 
 /// Effect kinds in Photoshop's list order: (command kind, label, params).
+/// The Styles preset gallery page id.
+pub const STYLES_PAGE: &str = "styles";
 /// The Blending Options page id (not an effect).
 pub const BLENDING: &str = "blendingOptions";
 
@@ -358,7 +360,7 @@ fn entry_mut<'a>(f: &'a mut Map<String, Value>, id: &str) -> Option<&'a mut Valu
 
 /// Stores one edited parameter of an instance (or of the blending page).
 fn set_param(f: &mut Map<String, Value>, id: &str, key: &str, value: Value) {
-    if id == BLENDING {
+    if id == BLENDING || id == STYLES_PAGE {
         if let Some(o) = f.get_mut("p:blendingOptions").and_then(Value::as_object_mut) {
             o.insert(key.into(), value);
         }
@@ -410,7 +412,7 @@ fn remove_instance(f: &mut Map<String, Value>, id: &str) {
             .and_then(|kind| effects_of(f).iter().find(|e| e.get("kind").and_then(Value::as_str) == Some(kind)))
             .and_then(|e| e.get("id").and_then(Value::as_str))
             .map(str::to_string);
-        f.insert("selected".into(), json!(sibling.unwrap_or_else(|| BLENDING.into())));
+        f.insert("selected".into(), json!(sibling.unwrap_or_else(|| STYLES_PAGE.into())));
     }
 }
 
@@ -440,6 +442,7 @@ pub fn initial_fields(layer: &Layer, select: Option<&str>, light: f32) -> Map<St
     f.insert("effects".into(), Value::Array(effects));
     let selected = match select {
         None => effects_of(&f).first().and_then(|e| e.get("id").and_then(Value::as_str)).map(str::to_string).unwrap_or_else(|| "dropShadow".into()),
+        Some(STYLES_PAGE) => STYLES_PAGE.to_string(),
         Some(BLENDING) => BLENDING.to_string(),
         Some(kind) => {
             let existing = effects_of(&f)
@@ -568,35 +571,28 @@ pub fn preview_document(
     s.active().map(|d| (*d.doc).clone())
 }
 
-/// Reloads the dialog fields from the layer (after a style was applied to it),
-/// keeping the selected page where the effect still exists.
-fn refresh(app: &mut PhotocraftApp, f: &mut Map<String, Value>) {
-    let sel_kind =
-        f.get("selected").and_then(Value::as_str).and_then(|id| entry(f, id).and_then(|e| e.get("kind").and_then(Value::as_str))).map(str::to_string);
-    let layer_id = f.get("layer").and_then(Value::as_u64).unwrap_or(0);
-    let Some(st) = app.session.active() else { return };
-    let Some(layer) = st.doc.layer(photocraft_doc::LayerId(layer_id)).cloned() else { return };
-    let light = st.doc.global_light.angle;
-    let mut nf = initial_fields(&layer, None, light);
-    if let Some(kind) = sel_kind {
-        let sel = effects_of(&nf)
-            .iter()
-            .find(|e| e.get("kind").and_then(Value::as_str) == Some(kind.as_str()))
-            .and_then(|e| e.get("id").cloned())
-            .unwrap_or_else(|| json!(BLENDING));
-        nf.insert("selected".into(), sel);
+/// Applies a style preset to the dialog fields in-place without touching the document.
+/// Clicking Cancel leaves the document untouched; clicking OK commits.
+fn apply_style_preset(app: &PhotocraftApp, f: &mut Map<String, Value>, name: &str) {
+    let Ok(style) = photocraft_engine::presets::styles::find_style(&app.session, &json!({"preset": name}), "apply_style_preset") else { return };
+    let light = f.get("globalLight").and_then(Value::as_f64).unwrap_or(120.0) as f32;
+    let mut effects = Vec::new();
+    for (i, e) in style.effects.iter().enumerate() {
+        effects.push(json!({
+            "id": format!("fx{}", i + 1),
+            "kind": kind_of(e),
+            "on": e.enabled(),
+            "params": values_of(e, light),
+            "fx": serde_json::to_value(e).unwrap_or(Value::Null),
+        }));
     }
-    if let Some(open) = f.get("__stylesOpen") {
-        nf.insert("__stylesOpen".into(), open.clone());
+    f.insert("effects".into(), Value::Array(effects));
+    if let Some(b) = style.blend {
+        set_param(f, BLENDING, "blend", json!(b.label()));
     }
-    nf.insert("patternList".into(), pattern_list(app));
-    *f = nf;
-}
-
-/// Applies a style preset to the dialog's layer, then reloads the fields from it.
-fn apply_style_preset(app: &mut PhotocraftApp, f: &mut Map<String, Value>, name: &str) {
-    let _ = app.run("style.presets.apply", json!({"preset": name, "layer": f.get("layer").cloned().unwrap_or(Value::Null)}));
-    refresh(app, f);
+    if let Some(fo) = style.fill_opacity {
+        set_param(f, BLENDING, "fillOpacity", json!((fo * 100.0).round()));
+    }
 }
 
 /// Saves the dialog's pending state (enabled instances + blending page) as a style preset.
@@ -639,48 +635,25 @@ pub fn body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Valu
         // Left: effect list.
         ui.vertical(|ui| {
             ui.set_width(190.0);
-            // Style presets (collapsible, like Photoshop's Styles area).
-            let open = f.get("__stylesOpen").and_then(Value::as_bool).unwrap_or(true);
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(tl!("Styles")).color(t.text_faint));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.add(egui::Label::new(RichText::new(if open { "▾" } else { "▸" }).color(t.text_faint)).sense(Sense::click())).clicked() {
-                        f.insert("__stylesOpen".into(), json!(!open));
-                    }
-                });
-            });
-            // Blending Options page (layer blend mode, opacity and fill opacity).
-            let bo = ui.add(
-                egui::Label::new(RichText::new(tl!("Blending Options")).color(if selected == BLENDING { t.text } else { t.text_dim })).sense(Sense::click()),
-            );
-            if bo.clicked() {
-                f.insert("selected".into(), json!(BLENDING));
-            }
-            if open {
-                let ctx = ui.ctx().clone();
-                egui::ScrollArea::vertical().max_height(120.0).id_salt("layer-style-presets").show(ui, |ui| {
-                    for group in &app.session.presets.styles {
-                        ui.label(RichText::new(&group.name).size(10.5).color(t.text_faint));
-                        ui.horizontal_wrapped(|ui| {
-                            ui.spacing_mut().item_spacing = vec2(3.0, 3.0);
-                            for st in &group.items {
-                                let tex = crate::preset_panels::style_texture(app, &ctx, st);
-                                let (rect, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
-                                ui.painter().image(tex.id(), rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
-                                let (stroke, kind) = if resp.hovered() {
-                                    (Stroke::new(1.5, t.accent), egui::StrokeKind::Outside)
-                                } else {
-                                    (Stroke::new(1.0, t.card_border), egui::StrokeKind::Inside)
-                                };
-                                ui.painter().rect_stroke(rect, 2.0, stroke, kind);
-                                if resp.on_hover_text(&st.name).clicked() {
-                                    style_click = Some(st.name.clone());
-                                }
-                            }
-                        });
-                    }
-                });
-                ui.add_space(2.0);
+            // Styles & Blending Options rows (matching the effect row layout & padding).
+            for (id, label) in [(STYLES_PAGE, "Styles"), (BLENDING, "Blending Options")] {
+                let is_sel = selected == id;
+                let (rect, resp) = ui.allocate_exact_size(vec2(190.0, 26.0), Sense::click());
+                if is_sel {
+                    ui.painter().rect_filled(rect, t.radius_sm, t.row_selected.gamma_multiply(if t.pro { 1.0 } else { 0.0 }).max_alpha(t.hover));
+                } else if resp.hovered() {
+                    ui.painter().rect_filled(rect, t.radius_sm, t.hover.gamma_multiply(0.5));
+                }
+                ui.painter().text(
+                    rect.left_center() + vec2(28.0, 0.0),
+                    egui::Align2::LEFT_CENTER,
+                    tl!(label),
+                    egui::FontId::proportional(12.5),
+                    if is_sel { t.text } else { t.text_dim },
+                );
+                if resp.clicked() {
+                    f.insert("selected".into(), json!(id));
+                }
             }
             ui.add_space(4.0);
             for &(kind, label) in KINDS {
@@ -763,15 +736,48 @@ pub fn body(app: &mut PhotocraftApp, ui: &mut egui::Ui, f: &mut Map<String, Valu
                     }
                 }
             }
-            ui.add_space(6.0);
-            if crate::widgets::secondary_button(ui, tl!("New Style…"), 190.0).clicked() {
-                new_style = true;
-            }
         });
         widgets::vline(ui, 330.0);
         // Right: parameters of the selected page.
         ui.vertical(|ui| {
             ui.set_width(330.0);
+            if selected == STYLES_PAGE {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(tl!("Styles")).font(crate::theme::semibold(14.0)).color(t.text));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if crate::widgets::secondary_button(ui, tl!("New Style…"), 100.0).clicked() {
+                            new_style = true;
+                        }
+                    });
+                });
+                ui.add_space(8.0);
+                let ctx = ui.ctx().clone();
+                egui::ScrollArea::vertical().max_height(340.0).id_salt("layer-style-presets-main").show(ui, |ui| {
+                    for group in &app.session.presets.styles {
+                        ui.label(RichText::new(&group.name).size(12.0).color(t.text_dim));
+                        ui.add_space(3.0);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+                            for st in &group.items {
+                                let tex = crate::preset_panels::style_texture(app, &ctx, st);
+                                let (rect, resp) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::click());
+                                ui.painter().image(tex.id(), rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+                                let (stroke, kind) = if resp.hovered() {
+                                    (Stroke::new(1.5, t.accent), egui::StrokeKind::Outside)
+                                } else {
+                                    (Stroke::new(1.0, t.card_border), egui::StrokeKind::Inside)
+                                };
+                                ui.painter().rect_stroke(rect, 2.0, stroke, kind);
+                                if resp.on_hover_text(&st.name).clicked() {
+                                    style_click = Some(st.name.clone());
+                                }
+                            }
+                        });
+                        ui.add_space(10.0);
+                    }
+                });
+                return;
+            }
             let sel_kind: String = if selected == BLENDING {
                 BLENDING.to_string()
             } else {
@@ -1232,7 +1238,12 @@ mod tests {
         app.run("layer.new.layer", json!({})).unwrap();
         let mut f2 = initial_fields(app.session.active().unwrap().doc.layer(app.session.active().unwrap().active_layer.unwrap()).unwrap(), None, 120.0);
         f2.insert("layer".into(), json!(app.session.active().unwrap().active_layer.unwrap().0));
-        apply_style_preset(&mut app, &mut f2, "Style");
+        apply_style_preset(&app, &mut f2, "Style");
+        // Swatch clicks update the dialog fields only; document is untouched until confirm.
+        assert_eq!(effects_of(&f2).len(), 1);
+        assert_eq!(effects_of(&f2)[0]["params"]["size"], json!(9.0));
+        // Confirming applies the style to the layer.
+        confirm(&mut app, &f2).unwrap();
         let st = app.session.active().unwrap();
         let strokes: Vec<f32> = st
             .doc
@@ -1246,8 +1257,24 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(strokes, vec![9.0], "the dialog's edits are in the preset");
-        // The dialog now reflects the applied style (the stroke instance loads from the layer).
-        assert_eq!(effects_of(&f2).len(), 1);
+        assert_eq!(strokes, vec![9.0], "confirming commits the style preset to the layer");
+    }
+
+    #[test]
+    fn style_click_does_not_mutate_document_until_confirm() {
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
+        app.run("file.new", json!({"width": 16, "height": 16})).unwrap();
+        app.run("layer.new.layer", json!({})).unwrap();
+        let id = app.session.active().unwrap().active_layer.unwrap();
+        let mut f = initial_fields(app.session.active().unwrap().doc.layer(id).unwrap(), Some(STYLES_PAGE), 120.0);
+        apply_style_preset(&app, &mut f, "Black Stroke");
+        // Document itself still has 0 effects.
+        assert_eq!(app.session.active().unwrap().doc.layer(id).unwrap().effects.items.len(), 0);
+        // Dialog fields now have the preset loaded.
+        assert_eq!(effects_of(&f).len(), 1);
+        // Cancel discards dialog; document remains with 0 effects.
+        // Confirm commits the style.
+        confirm(&mut app, &f).unwrap();
+        assert_eq!(app.session.active().unwrap().doc.layer(id).unwrap().effects.items.len(), 1);
     }
 }

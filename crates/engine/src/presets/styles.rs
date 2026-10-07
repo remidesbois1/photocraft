@@ -143,7 +143,7 @@ pub fn builtin() -> Vec<Group<StylePreset>> {
     ]
 }
 
-fn find_style<'a>(s: &'a Session, p: &Value, cmd: &str) -> Result<&'a StylePreset> {
+pub fn find_style<'a>(s: &'a Session, p: &Value, cmd: &str) -> Result<&'a StylePreset> {
     let name = req_str(p, "preset", cmd)?;
     let (gi, ii) = find(&s.presets.styles, name, str_param(p, "group")).ok_or_else(|| bad(cmd, format!("no style \"{name}\" (see style.presets.list)")))?;
     Ok(&s.presets.styles[gi].items[ii])
