@@ -2036,3 +2036,6 @@ cameraRaw	Color	색상
 
 	Create new style (from the selected type)	새 스타일 만들기(선택한 텍스트에서)
 	Create new style from the selected layer	선택한 레이어에서 새 스타일 만들기
+
+	Make Default	기본값으로 만들기
+	Reset to Default	기본값으로 되돌리기

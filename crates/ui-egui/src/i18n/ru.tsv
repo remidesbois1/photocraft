@@ -2348,3 +2348,6 @@ cameraRaw	Roughness	Неровность
 
 	Create new style (from the selected type)	Создать стиль (из выделенного текста)
 	Create new style from the selected layer	Создать стиль из выделенного слоя
+
+	Make Default	Сделать по умолчанию
+	Reset to Default	Сбросить к значению по умолчанию

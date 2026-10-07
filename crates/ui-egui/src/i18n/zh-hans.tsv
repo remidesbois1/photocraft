@@ -2081,3 +2081,6 @@ cameraRaw	Blending	混合
 
 	Create new style (from the selected type)	新建样式（基于所选文本）
 	Create new style from the selected layer	从所选图层新建样式
+
+	Make Default	设为默认
+	Reset to Default	重置为默认

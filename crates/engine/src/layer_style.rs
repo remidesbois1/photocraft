@@ -9,7 +9,7 @@ use photocraft_doc::{
 use serde_json::{Value, json};
 
 use crate::commands::{CommandSpec, blend_from_str};
-use crate::presets::bad;
+use crate::presets::{always, bad};
 use crate::{EngineError, Result, Session};
 
 /// Parses a gradient style name (`linear`, `radial`, `angle`, `reflected`, `diamond`).
@@ -563,6 +563,37 @@ fn set_effect(s: &mut Session, p: &Value, kind: &str) -> Result<Value> {
     Ok(json!({ "layer": id.0 }))
 }
 
+/// Stores the user default for one effect kind ("Make Default" in the Layer Style dialog).
+fn make_default(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "layer.layerStyle.makeDefault";
+    let kind = req_str_kind(p, CMD)?;
+    let params = match p.get("params") {
+        Some(v) if v.is_object() => v.clone(),
+        _ => return Err(bad(CMD, "`params` must be an object")),
+    };
+    s.presets.layer_defaults.insert(kind.to_string(), params);
+    s.presets_changed();
+    Ok(json!({"kind": kind}))
+}
+
+/// The user default for one effect kind, else its factory defaults.
+fn default_for(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "layer.layerStyle.defaultFor";
+    let kind = req_str_kind(p, CMD)?;
+    match s.presets.layer_defaults.get(kind) {
+        Some(v) if v.is_object() => Ok(json!({"params": v, "user": true})),
+        _ => Ok(json!({"params": effect_defaults(kind), "user": false})),
+    }
+}
+
+fn req_str_kind<'a>(p: &'a Value, cmd: &str) -> Result<&'a str> {
+    let kind = p.get("kind").and_then(Value::as_str).ok_or_else(|| bad(cmd, "need `kind`"))?;
+    if effect_from_params(kind, &Value::Null).is_none() {
+        return Err(bad(cmd, format!("unknown effect {kind}")));
+    }
+    Ok(kind)
+}
+
 fn has_layer(s: &Session) -> std::result::Result<(), String> {
     let d = s.active().ok_or("no document open")?;
     d.active_layer.filter(|id| d.doc.layer(*id).is_some()).map(|_| ()).ok_or_else(|| "no active layer".into())
@@ -637,6 +668,26 @@ pub fn specs() -> Vec<CommandSpec> {
             enabled: has_layer,
             run: replace_effects,
             journal: true,
+        },
+        CommandSpec {
+            id: "layer.layerStyle.makeDefault",
+            label: "Make Layer Style Default",
+            menu: &[],
+            shortcut: None,
+            params: r##"{"kind":"stroke|dropShadow|innerShadow|outerGlow|innerGlow|colorOverlay|gradientOverlay|patternOverlay|satin|bevelEmboss","params":{…param set…}} (stores the user default the Layer Style dialog's Reset to Default restores)"##,
+            enabled: always,
+            run: make_default,
+            journal: false,
+        },
+        CommandSpec {
+            id: "layer.layerStyle.defaultFor",
+            label: "Layer Style Default",
+            menu: &[],
+            shortcut: None,
+            params: r##"{"kind":str} → {"params":{…},"user":bool} (the saved user default, else the factory defaults)"##,
+            enabled: always,
+            run: default_for,
+            journal: false,
         },
         CommandSpec {
             id: "layer.layerStyle.clear",
@@ -858,5 +909,38 @@ mod tests {
         overlay_effect(&mut back, &json!({"contour": "Linear"}));
         let Effect::DropShadow(lin) = &back else { panic!() };
         assert_eq!(lin.contour, Contour::Linear);
+    }
+
+    #[test]
+    fn make_default_then_reset_restores_it() {
+        let mut s = session();
+        // Factory default first: Reset without a saved default gives the factory set.
+        let r = s.execute("layer.layerStyle.defaultFor", json!({"kind": "stroke"})).unwrap();
+        assert_eq!(r["user"], json!(false));
+        assert_eq!(r["params"]["size"], json!(3));
+        s.execute(
+            "layer.layerStyle.makeDefault",
+            json!({"kind": "stroke", "params": {"size": 9, "position": "inside", "blend": "Normal", "opacity": 100, "color": "#000000"}}),
+        )
+        .unwrap();
+        let r = s.execute("layer.layerStyle.defaultFor", json!({"kind": "stroke"})).unwrap();
+        assert_eq!(r["user"], json!(true));
+        assert_eq!(r["params"]["size"], json!(9));
+        // Bad kinds and params are graceful errors.
+        assert!(s.execute("layer.layerStyle.makeDefault", json!({"kind": "nope", "params": {}})).is_err());
+        assert!(s.execute("layer.layerStyle.makeDefault", json!({"kind": "stroke", "params": "x"})).is_err());
+        assert!(s.execute("layer.layerStyle.defaultFor", json!({"kind": "nope"})).is_err());
+    }
+
+    #[test]
+    fn layer_style_defaults_persist_with_presets() {
+        let mut s = session();
+        s.execute("layer.layerStyle.makeDefault", json!({"kind": "stroke", "params": {"size": 9}})).unwrap();
+        let blob = s.presets.to_json(&s);
+        let mut t = Session::new();
+        t.load_presets_json(blob);
+        let r = t.execute("layer.layerStyle.defaultFor", json!({"kind": "stroke"})).unwrap();
+        assert_eq!(r["user"], json!(true));
+        assert_eq!(r["params"]["size"], json!(9));
     }
 }
