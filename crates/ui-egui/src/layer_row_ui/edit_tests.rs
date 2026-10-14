@@ -174,7 +174,7 @@ fn edit_type_command_rejects_missing_or_non_type_layers_without_changes() {
 }
 
 #[test]
-fn reentering_type_edit_keeps_the_session_and_cancel_restores_cached_pixels() {
+fn double_click_commits_before_reopening_and_undo_restores_cached_pixels() {
     let mut s = session();
     let id = s.execute("type.create", json!({"text": "Hello", "size": 48, "x": 100, "y": 180})).unwrap()["layer"].as_u64().unwrap();
     // Stand-in for a PSD's retained Photoshop rendering, displaced from our glyph layout.
@@ -190,7 +190,7 @@ fn reentering_type_edit_keeps_the_session_and_cancel_restores_cached_pixels() {
         st.revision += 1;
         cache
     };
-    let steps = s.active().unwrap().history.entries().len();
+    let steps = s.active().unwrap().history.past_len();
     let mut h = harness(s, 1.0);
     let at = thumbnail(&h, id);
     double_click(&mut h, at);
@@ -198,9 +198,14 @@ fn reentering_type_edit_keeps_the_session_and_cancel_restores_cached_pixels() {
     h.event(Event::Text("Changed".into()));
     h.run_steps(2);
     double_click(&mut h, at);
-    assert_eq!(h.state().ui.text_edit.as_ref().unwrap().session, key);
-    assert_eq!(h.state().session.active().unwrap().history.entries().len(), steps + 1);
+    assert_ne!(h.state().ui.text_edit.as_ref().unwrap().session, key, "the first click commits, then the double-click starts a new session");
+    assert_eq!(h.state().session.active().unwrap().history.past_len(), steps + 1);
+    h.event(Event::Text("Discarded".into()));
+    h.run_steps(2);
     crate::type_tool::cancel(h.state_mut());
+    assert_eq!(text(&h, id), "Changed", "cancel only discards the reopened session");
+    assert_eq!(h.state().session.active().unwrap().history.past_len(), steps + 1);
+    h.state_mut().run("edit.undo", json!({})).unwrap();
     assert_eq!(text(&h, id), "Hello");
     let st = h.state().session.active().unwrap();
     let LayerContent::Text(t) = &st.doc.layer(LayerId(id)).unwrap().content else { panic!("text") };

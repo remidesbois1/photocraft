@@ -2565,6 +2565,16 @@ fn layers(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
         }
     });
     for (id, p) in actions {
+        if id == "layer.select"
+            && let Some(ed) = app.ui.text_edit.as_ref()
+        {
+            let edited = LayerId(ed.layer);
+            crate::type_tool::commit(app);
+            // Commit can delete a new empty text layer whose row was just clicked.
+            if p.get("layer").and_then(Value::as_u64) == Some(edited.0) && app.session.active().is_some_and(|st| st.doc.layer(edited).is_none()) {
+                continue;
+            }
+        }
         if id == "ui.maskTarget" {
             app.ui.mask_target = p.as_bool().unwrap_or(false);
             app.ui.vector_mask_target = false;
@@ -6056,3 +6066,7 @@ mod properties_target_regressions {
 #[cfg(test)]
 #[path = "history_panel_select_tests.rs"]
 mod history_panel_select_tests;
+
+#[cfg(test)]
+#[path = "layer_text_edit_tests.rs"]
+mod layer_text_edit_tests;
